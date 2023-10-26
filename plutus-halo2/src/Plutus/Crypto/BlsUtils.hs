@@ -249,10 +249,12 @@ compressG1Point (Fp x,Fp y)
 
 {-# INLINABLE unCompressG1Point #-}
 unCompressG1Point :: BuiltinBLS12_381_G1_Element -> (Fp, Fp)
-unCompressG1Point p = (x, y')
-    where x = Fp . byteStringToInteger $ foldr (\i acc -> writeBitByteString acc i False) ((reverseByteString . bls12_381_G1_compress) p) [7,6,5]
-          y = scale ((bls12_381_base_prime + 1) `divide` 4) (x * x * x + Fp 4)
-          y' = if unFp y > negate (unFp y) then y else negate y
+unCompressG1Point p
+    | p == bls12_381_G1_zero = (Fp 0, Fp 1)
+    | otherwise              = (x, y')
+        where x = Fp . byteStringToInteger $ foldr (\i acc -> writeBitByteString acc i False) ((reverseByteString . bls12_381_G1_compress) p) [7,6,5]
+              y = scale ((bls12_381_base_prime + 1) `divide` 4) (x * x * x + Fp 4)
+              y' = if unFp y > negate (unFp y) then y else negate y
 
 instance AdditiveSemigroup BuiltinBLS12_381_G1_Element where
     {-# INLINABLE (+) #-}
