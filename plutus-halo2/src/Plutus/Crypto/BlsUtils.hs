@@ -8,11 +8,13 @@
 module Plutus.Crypto.BlsUtils
 ( bls12_381_base_prime
 , Fp
+, unFp
 , mkFp
 , compressG1Point
 , unCompressG1Point
 , bls12_381_field_prime
 , Scalar
+, unScalar
 , mkScalar
 , MultiplicativeGroup (..)
 , modularExponentiationScalar
@@ -254,7 +256,7 @@ unCompressG1Point p
     | otherwise              = (x, y')
         where x = Fp . byteStringToInteger $ foldr (\i acc -> writeBitByteString acc i False) ((reverseByteString . bls12_381_G1_compress) p) [7,6,5]
               y = scale ((bls12_381_base_prime + 1) `divide` 4) (x * x * x + Fp 4)
-              y' = if unFp y > negate (unFp y) then y else negate y
+              y' = if unFp y < negate (unFp y) then y else negate y
 
 instance AdditiveSemigroup BuiltinBLS12_381_G1_Element where
     {-# INLINABLE (+) #-}
