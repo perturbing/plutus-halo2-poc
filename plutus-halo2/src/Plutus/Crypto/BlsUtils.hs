@@ -12,12 +12,19 @@ module Plutus.Crypto.BlsUtils
 , mkFp
 , compressG1Point
 , unCompressG1Point
+, Fp2 (..)
+, compressG2Point
+, unCompressG2Point
 , bls12_381_field_prime
 , Scalar
 , unScalar
 , mkScalar
 , MultiplicativeGroup (..)
+, pow
+, powMod
 , modularExponentiationScalar
+, modularExponentiationFp
+, modularExponentiationFp2
 , powerOfTwoExponentiation
 , reverseByteString
 ) where
@@ -37,7 +44,22 @@ import PlutusTx.Prelude
       Module(..),
       MultiplicativeMonoid(..),
       MultiplicativeSemigroup(..),
-      Ord((<), (<=)), rotateByteString, integerToByteString, dropByteString, (<>), even, divide, foldr, Bool (..), writeBitByteString, byteStringToInteger, (.), (>) )
+      Ord((<), (<=)),
+      rotateByteString,
+      integerToByteString,
+      dropByteString,
+      (<>),
+      even,
+      divide, 
+      foldr,
+      Bool (..),
+      writeBitByteString,
+      byteStringToInteger,
+      (.),
+      (>),
+      sliceByteString,
+      (||),
+      not )
 import PlutusTx (makeLift, makeIsDataIndexed, unstableMakeIsData)
 import PlutusTx.Numeric
     ( AdditiveGroup(..),
@@ -66,7 +88,11 @@ import PlutusTx.Builtins
       xorByteString,
       consByteString,
       emptyByteString,
-      indexByteString, bls12_381_G1_uncompress, bls12_381_G1_compress )
+      indexByteString,
+      bls12_381_G1_uncompress,
+      bls12_381_G1_compress,
+      bls12_381_G2_uncompress,
+      bls12_381_G2_compress )
 
 -- In this module, we setup the two prime order fields for BLS12-381.
 -- as the type Fp (base points) and Scalar. 
@@ -190,7 +216,7 @@ makeIsDataIndexed ''Fp [('Fp ,0)]
 mkFp :: Integer -> Fp
 mkFp n | 0 <= n && n < bls12_381_base_prime = Fp n
        | otherwise                          = error ()
-    
+
 instance Eq Fp where
     {-# INLINABLE (==) #-}
     Fp a == Fp b = a == b
@@ -234,29 +260,153 @@ instance MultiplicativeGroup Fp where
     {-# INLINABLE recip #-}
     recip = div one
 
+instance Ord Fp where
+    {-# INLINABLE (<) #-}
+    (<) :: Fp -> Fp -> Bool
+    Fp a < Fp b = a < b
+    {-# INLINABLE (<=) #-}
+    Fp a <= Fp b = a <= b
+    {-# INLINABLE (>) #-}
+    Fp a > Fp b = a > b
+    -- {-# INLINABLE (>=) #-}
+    -- Fp a >= Fp b = a >= b
+
+
 {-# INLINABLE compressG1Point #-}
 compressG1Point :: (Fp, Fp) -> BuiltinBLS12_381_G1_Element
-compressG1Point (Fp x,Fp y)
-    | x == 0 && y == 1  = bls12_381_G1_zero
-    | otherwise         = go ((setCompressedBit . fixLengthBs . integerToByteString) x) y
+compressG1Point (x, y)
+    | x == zero && y == one = bls12_381_G1_zero
+    | otherwise             = go ((setCompressedBit . fixLengthBs . integerToByteString. unFp) x) y
         where fixLengthBs :: BuiltinByteString -> BuiltinByteString
-              fixLengthBs bs 
+              fixLengthBs bs
                 | lengthOfByteString bs == 48 = bs
                 | otherwise                   = fixLengthBs (bs <> consByteString 0 emptyByteString)
               setCompressedBit x = bls12_381_G1_uncompress $ reverseByteString (writeBitByteString x 7 True)
-              go :: BuiltinBLS12_381_G1_Element -> Integer -> BuiltinBLS12_381_G1_Element
-              go x y
-                | y < negate y = x
-                | otherwise    = bls12_381_G1_neg x
+              go :: BuiltinBLS12_381_G1_Element -> Fp -> BuiltinBLS12_381_G1_Element
+              go p y'
+                | y' < negate y' = p
+                | otherwise      = bls12_381_G1_neg p
 
 {-# INLINABLE unCompressG1Point #-}
 unCompressG1Point :: BuiltinBLS12_381_G1_Element -> (Fp, Fp)
 unCompressG1Point p
-    | p == bls12_381_G1_zero = (Fp 0, Fp 1)
+    | p == bls12_381_G1_zero = (zero, one)
     | otherwise              = (x, y')
-        where x = Fp . byteStringToInteger $ foldr (\i acc -> writeBitByteString acc i False) ((reverseByteString . bls12_381_G1_compress) p) [7,6,5]
+        where p' = reverseByteString . bls12_381_G1_compress $ p
+              thirdBit = testBitByteString p' 5
+              x = Fp . byteStringToInteger $ foldr (\i acc -> writeBitByteString acc i False) p' [7,6,5]
               y = scale ((bls12_381_base_prime + 1) `divide` 4) (x * x * x + Fp 4)
-              y' = if unFp y < negate (unFp y) then y else negate y
+              y' = if (thirdBit && y < negate y) || (not thirdBit && y > negate y) then negate y else y
+
+
+-- The field elements are the x and y coordinates of the points on the curve.
+data Fp2 = Fp2
+    { c0 :: Fp
+    , c1 :: Fp
+    } deriving (Haskell.Show)
+makeLift ''Fp2
+makeIsDataIndexed ''Fp2 [('Fp2 ,0)]
+
+instance Eq Fp2 where
+    {-# INLINABLE (==) #-}
+    Fp2 x1 y1 == Fp2 x2 y2 = x1 == x2 && y1 == y2
+
+instance AdditiveSemigroup Fp2 where
+    {-# INLINABLE (+) #-}
+    (+) (Fp2 a b) (Fp2 c d) = Fp2 (a+c) (b+d)
+
+instance AdditiveMonoid Fp2 where
+    {-# INLINABLE zero #-}
+    zero = Fp2 zero zero
+
+instance AdditiveGroup Fp2 where
+    {-# INLINABLE (-) #-}
+    (-) (Fp2 a b) (Fp2 c d) = Fp2 (a-c) (b-d)
+
+instance MultiplicativeSemigroup Fp2 where
+    {-# INLINABLE (*) #-}
+    (*) (Fp2 a b) (Fp2 c d) = Fp2 (a*c - b*d) (a*d + b*c)
+
+instance MultiplicativeMonoid Fp2 where
+    {-# INLINABLE one #-}
+    one = Fp2 one zero
+
+{-# INLINABLE pow #-}
+pow :: Integer -> Integer -> Integer
+pow b e
+    | e < 0     = zero
+    | e == 0    = 1
+    | even e    = pow (b*b) (e `divide` 2)
+    | otherwise = b * pow (b*b) ((e - 1) `divide` 2)
+
+{-# INLINABLE modularExponentiationFp2 #-}
+modularExponentiationFp2 :: Fp2 -> BuiltinByteString -> Fp2
+modularExponentiationFp2 b e
+    | popCountByteString e == 0  = one
+    | otherwise = t * modularExponentiationFp2 (b*b) (shiftByteString e (-1))
+                where t = if testBitByteString e 0 then b else one
+
+instance Module Integer Fp2 where
+    {-# INLINABLE scale #-}
+    scale :: Integer -> Fp2 -> Fp2
+    scale a b = modularExponentiationFp2 b (reverseByteString (integerToByteString a))
+
+instance MultiplicativeGroup Fp2 where
+    {-# INLINABLE div #-}
+    div a b | b == zero     = error ()
+            | otherwise     = a * recip b
+    {-# INLINABLE recip #-}
+    recip (Fp2 a b) = Fp2 (a `div` norm) (negate b `div` norm)
+        where norm = a*a + b*b
+
+instance Ord Fp2 where
+    {-# INLINABLE (<) #-}
+    (<) :: Fp2 -> Fp2 -> Bool
+    Fp2 a b < Fp2 c d = a < c || (a == c && b < d)
+    {-# INLINABLE (<=) #-}
+    Fp2 a b <= Fp2 c d = a <= c && b <= d
+    {-# INLINABLE (>) #-}
+    (>) :: Fp2 -> Fp2 -> Bool
+    Fp2 a b > Fp2 c d = a > c || (a == c && b > d)
+    -- {-# INLINABLE (>=) #-}
+    -- Fp2 a b >= Fp2 c d =
+
+{-# INLINABLE compressG2Point #-}
+compressG2Point :: (Fp2,Fp2) -> BuiltinBLS12_381_G2_Element
+compressG2Point (x, y)
+    | x == zero && y == one = bls12_381_G2_zero
+    | otherwise             = go (bls12_381_G2_uncompress xBsG2) y
+    where x' = unFp (c0 x) + unFp (c1 x) * pow 2 384
+          fixLengthBs :: BuiltinByteString -> BuiltinByteString
+          fixLengthBs bs
+                | lengthOfByteString bs == 96 = bs
+                | otherwise                   = fixLengthBs (bs <> consByteString 0 emptyByteString)
+          xBsG2 = reverseByteString $ writeBitByteString ((fixLengthBs . integerToByteString) x') 7 True
+          go :: BuiltinBLS12_381_G2_Element -> Fp2 -> BuiltinBLS12_381_G2_Element
+          go x y
+            | y < negate y   = x
+            | otherwise      = bls12_381_G2_neg x
+
+-- This function is for testing only, as the sqrt over Fp used the expensive scale function
+-- so it will cost around 20% of the script cpu budget.
+{-# INLINABLE unCompressG2Point #-}
+unCompressG2Point :: BuiltinBLS12_381_G2_Element -> (Fp2, Fp2)
+unCompressG2Point p
+    | p == bls12_381_G2_zero = (zero, one)
+    | otherwise              = (x, y')
+        where p' = reverseByteString . bls12_381_G2_compress $ p
+              thirdBit = testBitByteString p' 5
+              xBs = foldr (\i acc -> writeBitByteString acc i False) p' [7,6,5]
+              x = Fp2 (Fp . byteStringToInteger $ sliceByteString 0 48 xBs) (Fp . byteStringToInteger $ sliceByteString 48 96 xBs)
+              Fp2 c d = x * x * x + Fp2 (Fp 4) (Fp 4)
+              sqrt :: Fp -> Fp
+              sqrt = scale ((bls12_381_base_prime + 1) `divide` 4)
+              a = sqrt ((c + sqrt (c * c + d * d)) `div` Fp 2)
+              b' = sqrt ((negate c + sqrt (c * c + d * d)) `div` Fp 2)
+              b = if a * b' * Fp 2 == d then b' else negate b'
+              y = Fp2 a b
+              y' = if thirdBit && y < negate y then negate y else y
+
 
 instance AdditiveSemigroup BuiltinBLS12_381_G1_Element where
     {-# INLINABLE (+) #-}

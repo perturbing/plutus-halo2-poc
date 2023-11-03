@@ -1,5 +1,6 @@
 {-# LANGUAGE NoImplicitPrelude  #-}
 {-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE Strict             #-}
 
 module Plutus.Crypto.Halo2.Transcript 
 ( Transcript
@@ -45,7 +46,6 @@ addScalarToTranscript bs s = bs <> "\x02" <> integerToByteString (unScalar s)
 
 {-# INLINEABLE addPointToTranscript #-}
 addPointToTranscript :: Transcript -> BuiltinBLS12_381_G1_Element -> Transcript
-addPointToTranscript bs p = bs <> "\x01" <> integerToByteString x 
-                             <> integerToByteString y
-                where x = unFp . fst . unCompressG1Point $ p
-                      y = unFp . snd . unCompressG1Point $ p
+addPointToTranscript bs p = bs <> "\x01" <> (integerToByteString . unFp) x 
+                                         <> (integerToByteString . unFp) y
+                                         where (x,y) = unCompressG1Point p

@@ -35,10 +35,9 @@ addScalar :: Transcript -> Scalar -> Transcript
 addScalar bs s = bs <> "\x02" <> integerToByteString (unScalar s)
 
 addPoint :: Transcript -> BuiltinBLS12_381_G1_Element -> Transcript
-addPoint bs p = bs <> "\x01" <> integerToByteString x 
-                             <> integerToByteString y
-                where x = unFp . fst . unCompressG1Point $ p
-                      y = unFp . snd . unCompressG1Point $ p
+addPoint bs p = bs <> "\x01" <> (integerToByteString . unFp) x 
+                             <> (integerToByteString . unFp) y
+                where (x,y) =  unCompressG1Point p
 
 transcript0 :: Transcript
 transcript0 = emptyByteString
